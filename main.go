@@ -1,0 +1,192 @@
+// hallpass grants the logged-in user access to USB devices via udev uaccess
+// rules, so WebUSB/WebHID and userspace flashers work without root.
+package main
+
+import (
+	"fmt"
+	"os"
+	"regexp"
+	"strings"
+	"time"
+
+	tea "github.com/charmbracelet/bubbletea"
+)
+
+const usage = `hallpass: grant yourself access to USB devices
+
+usage:
+  hallpass                      interactive TUI
+  hallpass list                 connected devices and whether you can open them
+  hallpass rules                grants in ` + ManagedFile + `
+  hallpass allow VID[:PID]      grant a device (or a whole vendor without :PID)
+  hallpass revoke VID[:PID|*]   remove a grant
+`
+
+func main() {
+	if os.Geteuid() == 0 {
+		fail("run hallpass as your normal user; as root every device looks accessible (it uses sudo itself)")
+	}
+	args := os.Args[1:]
+	if len(args) == 0 {
+		if _, err := tea.NewProgram(newModel(), tea.WithAltScreen()).Run(); err != nil {
+			fail(err.Error())
+		}
+		return
+	}
+	var err error
+	switch args[0] {
+	case "list", "ls":
+		err = cmdList()
+	case "rules":
+		err = cmdRules()
+	case "allow":
+		err = needArg(args, cmdAllow)
+	case "revoke", "rm":
+		err = needArg(args, cmdRevoke)
+	case "-h", "--help", "help":
+		fmt.Print(usage)
+	default:
+		fmt.Fprint(os.Stderr, usage)
+		os.Exit(2)
+	}
+	if err != nil {
+		fail(err.Error())
+	}
+}
+
+func fail(msg string) {
+	fmt.Fprintln(os.Stderr, "hallpass:", msg)
+	os.Exit(1)
+}
+
+func needArg(args []string, f func(string) error) error {
+	if len(args) != 2 {
+		return fmt.Errorf("%s needs one VID[:PID] argument", args[0])
+	}
+	return f(strings.ToLower(args[1]))
+}
+
+func cmdList() error {
+	devs, err := Scan()
+	if err != nil {
+		return err
+	}
+	idx := LoadRuleIndex()
+	for _, d := range devs {
+		if d.IsRootHub() {
+			continue
+		}
+		mark := "✗"
+		if d.Writable {
+			mark = "✓"
+		} else if d.HidOnly() {
+			mark = "◐"
+		}
+		fmt.Printf("%s %s  %-8s %-14s %s\n", mark, d.ID(), d.SysName, d.Owner, d.Label())
+		for _, r := range idx.For(d) {
+			warn := ""
+			if r.Late() {
+				warn = "  ⚠ sorts after " + seatLate + ", grants nothing"
+			}
+			fmt.Printf("      %s%s\n", r, warn)
+		}
+	}
+	return nil
+}
+
+func cmdRules() error {
+	entries, err := LoadEntries()
+	if err != nil {
+		return err
+	}
+	if len(entries) == 0 {
+		fmt.Println("no grants in", ManagedFile)
+	}
+	for _, e := range entries {
+		fmt.Printf("%-10s %s  %s\n", e.Match(), e.Added, e.Label)
+	}
+	return nil
+}
+
+var idArg = regexp.MustCompile(`^([0-9a-f]{4})(?::([0-9a-f]{4}|\*))?$`)
+
+func parseID(s string) (vid, pid string, err error) {
+	m := idArg.FindStringSubmatch(s)
+	if m == nil {
+		return "", "", fmt.Errorf("bad id %q, want VID or VID:PID in hex (e.g. 0694:0008)", s)
+	}
+	if m[2] == "*" {
+		m[2] = ""
+	}
+	return m[1], m[2], nil
+}
+
+func cmdAllow(arg string) error {
+	vid, pid, err := parseID(arg)
+	if err != nil {
+		return err
+	}
+	// Prefer the connected device's own strings for the label.
+	d := Device{Vendor: vid, Product: pid}
+	if devs, err := Scan(); err == nil {
+		for _, x := range devs {
+			if x.Vendor == vid && (pid == "" || x.Product == pid) {
+				d = x
+				d.Product = pid
+				break
+			}
+		}
+	}
+	e := NewEntry(d, pid == "")
+	if pid != "" && d.Name == "" {
+		e.Label = d.Label()
+	}
+	entries, err := LoadEntries()
+	if err != nil {
+		return err
+	}
+	if err := runApply(WithEntry(entries, e), vid, nil); err != nil {
+		return err
+	}
+	fmt.Printf("allowed %s (%s)\n", e.Match(), e.Label)
+	return nil
+}
+
+func cmdRevoke(arg string) error {
+	vid, pid, err := parseID(arg)
+	if err != nil {
+		return err
+	}
+	match := vid + ":*"
+	if pid != "" {
+		match = vid + ":" + pid
+	}
+	entries, err := LoadEntries()
+	if err != nil {
+		return err
+	}
+	left := WithoutEntry(entries, match)
+	if len(left) == len(entries) {
+		return fmt.Errorf("no grant for %s in %s", match, ManagedFile)
+	}
+	devs, _ := Scan()
+	if err := runApply(left, vid, NodesFor(Entry{Vendor: vid, Product: pid}, devs)); err != nil {
+		return err
+	}
+	fmt.Printf("revoked %s\n", match)
+	return nil
+}
+
+func runApply(entries []Entry, vendor string, strip []string) error {
+	cmd, cleanup, err := ApplyCmd(entries, []string{vendor}, strip)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("applying rules: %w", err)
+	}
+	time.Sleep(200 * time.Millisecond) // logind applies the ACL just after settle
+	return nil
+}
