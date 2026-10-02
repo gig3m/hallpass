@@ -25,7 +25,8 @@ usage:
 
 func main() {
 	if os.Geteuid() == 0 {
-		fail("run hallpass as your normal user; as root every device looks accessible (it uses sudo itself)")
+		fail("don't run hallpass with sudo or as root; run plain `hallpass` as your normal user.\n" +
+			"It calls sudo itself when it writes the rules file, and as root every device looks accessible.")
 	}
 	args := os.Args[1:]
 	if len(args) == 0 {
