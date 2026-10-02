@@ -4,6 +4,7 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"regexp"
 	"strings"
@@ -28,8 +29,12 @@ func main() {
 	}
 	args := os.Args[1:]
 	if len(args) == 0 {
-		if _, err := tea.NewProgram(newModel(), tea.WithAltScreen()).Run(); err != nil {
+		final, err := tea.NewProgram(newModel(), tea.WithAltScreen(), tea.WithMouseCellMotion()).Run()
+		if err != nil {
 			fail(err.Error())
+		}
+		if m, ok := final.(model); ok {
+			fmt.Println(m.quitLine())
 		}
 		return
 	}
@@ -178,12 +183,12 @@ func cmdRevoke(arg string) error {
 }
 
 func runApply(entries []Entry, vendor string, strip []string) error {
-	cmd, cleanup, err := ApplyCmd(entries, []string{vendor}, strip)
+	cmd, cleanup, err := ApplyCmd(entries, []string{vendor}, strip, nil)
 	if err != nil {
 		return err
 	}
 	defer cleanup()
-	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, io.Discard, os.Stderr
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("applying rules: %w", err)
 	}

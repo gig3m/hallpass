@@ -154,6 +154,26 @@ func ownerOf(path string) string {
 	return fmt.Sprintf("%s:%s %04o", userName(st.Uid), groupName(st.Gid), st.Mode&0o777)
 }
 
+// ACLUsers returns the users named in a node's access ACL (the entries
+// logind adds for uaccess), read straight from the posix_acl_access xattr.
+func ACLUsers(path string) []string {
+	buf := make([]byte, 256)
+	n, err := syscall.Getxattr(path, "system.posix_acl_access", buf)
+	if err != nil || n < 4 {
+		return nil
+	}
+	var out []string
+	for off := 4; off+8 <= n; off += 8 {
+		tag := uint16(buf[off]) | uint16(buf[off+1])<<8
+		if tag != 0x02 { // ACL_USER
+			continue
+		}
+		id := uint32(buf[off+4]) | uint32(buf[off+5])<<8 | uint32(buf[off+6])<<16 | uint32(buf[off+7])<<24
+		out = append(out, userName(id))
+	}
+	return out
+}
+
 // hidrawNodes finds /dev/hidrawN nodes belonging to this device's interfaces.
 func hidrawNodes(dir string) []Node {
 	matches, _ := filepath.Glob(filepath.Join(dir, "*:*", "*", "hidraw", "hidraw*"))
