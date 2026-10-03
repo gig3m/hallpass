@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"regexp"
+	"runtime/debug"
 	"strings"
 	"time"
 
@@ -21,7 +22,22 @@ usage:
   hallpass rules                grants in ` + ManagedFile + `
   hallpass allow VID[:PID]      grant a device (or a whole vendor without :PID)
   hallpass revoke VID[:PID|*]   remove a grant
+  hallpass --version
 `
+
+// version is set at release build time with -ldflags "-X main.version=...".
+var version = ""
+
+// buildVersion falls back to the module version, so go install @vX works too.
+func buildVersion() string {
+	if version != "" {
+		return version
+	}
+	if bi, ok := debug.ReadBuildInfo(); ok && bi.Main.Version != "" {
+		return bi.Main.Version
+	}
+	return "dev"
+}
 
 func main() {
 	if os.Geteuid() == 0 {
@@ -49,6 +65,8 @@ func main() {
 		err = needArg(args, cmdAllow)
 	case "revoke", "rm":
 		err = needArg(args, cmdRevoke)
+	case "-v", "--version", "version":
+		fmt.Println("hallpass", buildVersion())
 	case "-h", "--help", "help":
 		fmt.Print(usage)
 	default:
