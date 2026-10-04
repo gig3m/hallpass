@@ -41,6 +41,13 @@ The Grants tab lists your passes and the exact lines hallpass wrote for each.
 go install github.com/gig3m/hallpass@latest
 ```
 
+On Arch, build the package from the PKGBUILD in this repo (it goes to the AUR once AUR registration reopens):
+
+```sh
+curl -LO https://raw.githubusercontent.com/gig3m/hallpass/main/packaging/arch/PKGBUILD
+makepkg -si
+```
+
 or from a checkout:
 
 ```sh
