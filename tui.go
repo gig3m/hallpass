@@ -615,8 +615,15 @@ func (m model) run(j job, password string) (tea.Model, tea.Cmd) {
 	}
 	go func() {
 		defer cleanup()
+		// Keep the dialog up long enough to read; the real work often
+		// finishes in a fraction of a second.
+		began := time.Now()
+		send := func(msg applyDoneMsg) {
+			time.Sleep(time.Until(began.Add(700 * time.Millisecond)))
+			a.ch <- msg
+		}
 		if err := cmd.Start(); err != nil {
-			a.ch <- applyDoneMsg{job: j, err: err}
+			send(applyDoneMsg{job: j, err: err})
 			return
 		}
 		readSteps(stdout, a.ch)
@@ -628,10 +635,10 @@ func (m model) run(j job, password string) (tea.Model, tea.Cmd) {
 			if msg == "" {
 				msg = err.Error()
 			}
-			a.ch <- applyDoneMsg{job: j, err: fmt.Errorf("%s", lastLine(msg)), auth: auth}
+			send(applyDoneMsg{job: j, err: fmt.Errorf("%s", lastLine(msg)), auth: auth})
 			return
 		}
-		a.ch <- applyDoneMsg{job: j}
+		send(applyDoneMsg{job: j})
 	}()
 	return m, tea.Batch(waitApply(a.ch), spin())
 }
@@ -671,6 +678,11 @@ func (m model) finish(r applyDoneMsg) (tea.Model, tea.Cmd) {
 	if !r.job.allow {
 		m.setStatus("revoked "+e.Match(), cInfo)
 		return m, nil
+	}
+	for i, x := range m.entries {
+		if x.Match() == e.Match() {
+			m.cur[1] = i // so the Grants tab opens on the new pass
+		}
 	}
 	m.setStatus("★ pass issued · "+e.Match()+" "+e.Label, cOK)
 	m.flash = map[string]bool{}

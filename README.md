@@ -11,7 +11,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/devices.png" alt="hallpass devices tab: a device list with access status and a pass card for the selected device" width="900">
+  <img src="docs/demo.gif" alt="hallpass demo: selecting a root-only USB device, issuing a pass so it flips to open, viewing the rule it wrote, then revoking it" width="900">
 </p>
 
 You plug in a dev board, open a browser flasher or a vendor configurator, and get "device not accessible" or "Failed to execute 'open' on 'USBDevice'". The tool runs as you, but the device node is `root:root 0664`, so only root can open it. The fix is a udev rule, and getting it right is fiddly: the file name decides whether it works at all, and when it doesn't, nothing tells you.
@@ -24,6 +24,10 @@ hallpass does it for you. Pick the device, press `a`, and it's open. No re-plugg
 - **Which rule is responsible**, across `/etc`, `/run` and `/usr/lib/udev/rules.d`, with ⚠ on rules that look right but grant nothing.
 - **A pass card** for the selected device: its nodes, who has access, which tools will work (WebUSB, libusb / dfu-util, WebHID), and the rules that mention it.
 - **Live hotplug**, so a device that drops off the bus while switching into bootloader mode is obvious.
+
+<p align="center">
+  <img src="docs/devices.png" alt="hallpass devices tab: a device list with access status and a pass card for the selected device" width="900">
+</p>
 
 <p align="center">
   <img src="docs/grants.png" alt="hallpass grants tab: the list of passes and the exact udev rule lines written for the selected one" width="900">
