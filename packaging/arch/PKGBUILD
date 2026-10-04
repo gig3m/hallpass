@@ -1,6 +1,6 @@
 # Maintainer: Kyle Arrington <kyle at arrington dot co>
 pkgname=hallpass
-pkgver=0.1.1
+pkgver=0.1.2
 pkgrel=1
 pkgdesc='TUI for granting yourself access to USB devices via udev uaccess rules (WebUSB, WebHID, DFU flashers)'
 arch=('x86_64' 'aarch64')
@@ -9,7 +9,7 @@ license=('MIT')
 depends=('glibc' 'systemd' 'acl' 'sudo')
 makedepends=('go')
 source=("$pkgname-$pkgver.tar.gz::$url/archive/v$pkgver.tar.gz")
-sha256sums=('39c2a536b1e2cd325fd4fd42d5f9b539e3ccf636af950b75c347de52bdd429ba')
+sha256sums=('3c9299ae7e17a1d2330fc54df0b33e19ac1cbac6513f386e7ab4c893a6c566d3')
 
 prepare() {
   cd "$pkgname-$pkgver"
