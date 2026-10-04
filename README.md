@@ -1,7 +1,7 @@
 <h1 align="center">hallpass</h1>
 
 <p align="center">
-  Give yourself access to USB devices on Linux, without running anything as root.
+  Let your browser and flashers open USB devices on Linux, by writing the udev rules for you.
 </p>
 
 <p align="center">
@@ -16,7 +16,7 @@
 
 You plug in a dev board, open a browser flasher or a vendor configurator, and get "device not accessible" or "Failed to execute 'open' on 'USBDevice'". The tool runs as you, but the device node is `root:root 0664`, so only root can open it. The fix is a udev rule, and getting it right is fiddly: the file name decides whether it works at all, and when it doesn't, nothing tells you.
 
-hallpass does it for you. Pick the device, press `a`, and it's open. No re-plugging, no group membership, no running your browser as root.
+hallpass does it for you. Pick the device, press `a`, confirm sudo, and it's open. No re-plugging, no group membership, and your browser or flasher keeps running as you, not root.
 
 ## What it shows
 
