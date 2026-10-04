@@ -2,6 +2,9 @@ package main
 
 import (
 	"bufio"
+	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -9,6 +12,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode"
 )
 
 // ManagedFile is the only file hallpass writes. It must sort before
@@ -39,27 +43,68 @@ func (e Entry) Covers(d Device) bool {
 }
 
 // Lines renders the entry: the raw USB node (WebUSB, libusb, DFU tools) and
-// its hidraw nodes (WebHID). ATTR, not ATTRS, on the usb_device line so a
-// vendor grant for a hub doesn't spill onto everything plugged into it.
+// its hidraw nodes (WebHID). Both match only the device itself, never an
+// ancestor: ATTR (not ATTRS) on the usb_device line, and on the hidraw line
+// the usb_id builtin's ID_VENDOR_ID/ID_MODEL_ID, which name the nearest USB
+// device. Otherwise a grant for a hub would cover everything plugged into it.
 func (e Entry) Lines() []string {
 	usb := fmt.Sprintf(`SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", ATTR{idVendor}=="%s"`, e.Vendor)
-	hid := fmt.Sprintf(`SUBSYSTEM=="hidraw", KERNEL=="hidraw*", ATTRS{idVendor}=="%s"`, e.Vendor)
+	hid := fmt.Sprintf(`SUBSYSTEM=="hidraw", KERNEL=="hidraw*", ENV{ID_VENDOR_ID}=="%s"`, e.Vendor)
 	if e.Product != "" {
 		usb += fmt.Sprintf(`, ATTR{idProduct}=="%s"`, e.Product)
-		hid += fmt.Sprintf(`, ATTRS{idProduct}=="%s"`, e.Product)
+		hid += fmt.Sprintf(`, ENV{ID_MODEL_ID}=="%s"`, e.Product)
 	}
 	return []string{
-		fmt.Sprintf("# hallpass: %s | %s | %s", e.Match(), e.Added, e.Label),
+		fmt.Sprintf("# hallpass: %s | %s | %s", e.Match(), e.Added, cleanText(e.Label, 80)),
 		usb + `, TAG+="uaccess"`,
 		hid + `, TAG+="uaccess"`,
 	}
 }
 
+var (
+	hexID   = regexp.MustCompile(`^[0-9a-f]{4}$`)
+	dateish = regexp.MustCompile(`^[0-9-]*$`)
+)
+
+// Valid reports whether the entry is safe to render: ids are exactly four
+// lowercase hex digits and the date has no spaces or separators.
+func (e Entry) Valid() bool {
+	return hexID.MatchString(e.Vendor) && (e.Product == "" || hexID.MatchString(e.Product)) &&
+		dateish.MatchString(e.Added)
+}
+
+// cleanText makes untrusted text (USB string descriptors come straight from
+// the device) safe for a rules-file comment and a terminal: control and
+// format characters, including newlines and escape sequences, become
+// spaces, runs of space collapse, and the result is capped at max runes.
+func cleanText(s string, max int) string {
+	var b strings.Builder
+	space := false
+	n := 0
+	for _, r := range s {
+		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) || r == '\u2028' || r == '\u2029' || unicode.IsSpace(r) {
+			space = b.Len() > 0
+			continue
+		}
+		if n >= max {
+			break
+		}
+		if space {
+			b.WriteByte(' ')
+			n++
+			space = false
+		}
+		b.WriteRune(r)
+		n++
+	}
+	return b.String()
+}
+
 func NewEntry(d Device, wholeVendor bool) Entry {
-	e := Entry{Vendor: d.Vendor, Product: d.Product, Label: d.Label(), Added: time.Now().Format("2006-01-02")}
+	e := Entry{Vendor: d.Vendor, Product: d.Product, Label: cleanText(d.Label(), 80), Added: time.Now().Format("2006-01-02")}
 	if wholeVendor {
 		e.Product = ""
-		e.Label = vendorLabel(d)
+		e.Label = cleanText(vendorLabel(d), 80)
 	}
 	return e
 }
@@ -77,31 +122,61 @@ func vendorLabel(d Device) string {
 var headerRe = regexp.MustCompile(`^# hallpass: ([0-9a-f]{4}):([0-9a-f]{4}|\*) \| (\S*) \| (.*)$`)
 
 // LoadEntries reads the managed file. A missing file is no entries.
-func LoadEntries() ([]Entry, error) { return loadEntriesFrom(ManagedFile) }
+func LoadEntries() ([]Entry, error) {
+	entries, _, err := loadEntriesFrom(ManagedFile)
+	return entries, err
+}
 
-func loadEntriesFrom(path string) ([]Entry, error) {
-	f, err := os.Open(path)
+// loadEntriesFrom also returns the file's sha256 ("" if it doesn't exist),
+// so a later write can check nothing changed in between.
+func loadEntriesFrom(path string) ([]Entry, string, error) {
+	data, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
-		return nil, nil
+		return nil, "", nil
 	}
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
-	defer f.Close()
+	sum := sha256.Sum256(data)
+	return parseEntries(data), hex.EncodeToString(sum[:]), nil
+}
+
+func parseEntries(data []byte) []Entry {
 	var out []Entry
-	sc := bufio.NewScanner(f)
+	sc := bufio.NewScanner(bytes.NewReader(data))
 	for sc.Scan() {
 		m := headerRe.FindStringSubmatch(sc.Text())
 		if m == nil {
 			continue
 		}
-		e := Entry{Vendor: m[1], Product: m[2], Added: m[3], Label: m[4]}
+		e := Entry{Vendor: m[1], Product: m[2], Added: m[3], Label: cleanText(m[4], 80)}
 		if e.Product == "*" {
 			e.Product = ""
 		}
 		out = append(out, e)
 	}
-	return out, sc.Err()
+	return out
+}
+
+// Change is one edit to the managed file. It is applied to the file as it is
+// at apply time, not to whatever a long-running TUI loaded earlier.
+type Change struct {
+	Add    *Entry // grant, replacing any entry with the same match
+	Remove string // match to revoke ("vid:pid" or "vid:*")
+}
+
+func (c Change) apply(entries []Entry) ([]Entry, error) {
+	switch {
+	case c.Add != nil:
+		return WithEntry(entries, *c.Add), nil
+	case c.Remove != "":
+		out := WithoutEntry(entries, c.Remove)
+		if len(out) == len(entries) {
+			return nil, fmt.Errorf("no grant for %s in %s", c.Remove, ManagedFile)
+		}
+		return out, nil
+	}
+	return entries, nil
 }
 
 // Render produces the whole managed file. Entries are regenerated from their
@@ -173,8 +248,8 @@ func (r RuleRef) String() string {
 }
 
 var (
-	vidRe   = regexp.MustCompile(`ATTRS?\{idVendor\}=="([^"]*)"`)
-	pidRe   = regexp.MustCompile(`ATTRS?\{idProduct\}=="([^"]*)"`)
+	vidRe   = regexp.MustCompile(`(?:ATTRS?\{idVendor\}|ENV\{ID_VENDOR_ID\})=="([^"]*)"`)
+	pidRe   = regexp.MustCompile(`(?:ATTRS?\{idProduct\}|ENV\{ID_MODEL_ID\})=="([^"]*)"`)
 	modeRe  = regexp.MustCompile(`MODE:?="([^"]*)"`)
 	groupRe = regexp.MustCompile(`GROUP:?="([^"]*)"`)
 )

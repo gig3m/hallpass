@@ -22,6 +22,7 @@ usage:
   hallpass rules                grants in ` + ManagedFile + `
   hallpass allow VID[:PID]      grant a device (or a whole vendor without :PID)
   hallpass revoke VID[:PID|*]   remove a grant
+  hallpass rewrite              regenerate the rules file (after upgrading hallpass)
   hallpass --version
 `
 
@@ -65,6 +66,8 @@ func main() {
 		err = needArg(args, cmdAllow)
 	case "revoke", "rm":
 		err = needArg(args, cmdRevoke)
+	case "rewrite":
+		err = cmdRewrite()
 	case "-v", "--version", "version":
 		fmt.Println("hallpass", buildVersion())
 	case "-h", "--help", "help":
@@ -163,13 +166,9 @@ func cmdAllow(arg string) error {
 	}
 	e := NewEntry(d, pid == "")
 	if pid != "" && d.Name == "" {
-		e.Label = d.Label()
+		e.Label = cleanText(d.Label(), 80)
 	}
-	entries, err := LoadEntries()
-	if err != nil {
-		return err
-	}
-	if err := runApply(WithEntry(entries, e), vid, nil); err != nil {
+	if err := runApply(Change{Add: &e}); err != nil {
 		return err
 	}
 	fmt.Printf("allowed %s (%s)\n", e.Match(), e.Label)
@@ -185,24 +184,33 @@ func cmdRevoke(arg string) error {
 	if pid != "" {
 		match = vid + ":" + pid
 	}
-	entries, err := LoadEntries()
-	if err != nil {
-		return err
-	}
-	left := WithoutEntry(entries, match)
-	if len(left) == len(entries) {
-		return fmt.Errorf("no grant for %s in %s", match, ManagedFile)
-	}
-	devs, _ := Scan()
-	if err := runApply(left, vid, NodesFor(Entry{Vendor: vid, Product: pid}, devs)); err != nil {
+	if err := runApply(Change{Remove: match}); err != nil {
 		return err
 	}
 	fmt.Printf("revoked %s\n", match)
 	return nil
 }
 
-func runApply(entries []Entry, vendor string, strip []string) error {
-	cmd, cleanup, err := ApplyCmd(entries, []string{vendor}, strip, nil)
+// cmdRewrite regenerates the managed file from its entries, e.g. after an
+// upgrade that changes the rule format.
+func cmdRewrite() error {
+	entries, err := LoadEntries()
+	if err != nil {
+		return err
+	}
+	if len(entries) == 0 {
+		fmt.Println("no grants in", ManagedFile)
+		return nil
+	}
+	if err := runApply(Change{}); err != nil {
+		return err
+	}
+	fmt.Printf("rewrote %d grant%s in %s\n", len(entries), plural(len(entries)), ManagedFile)
+	return nil
+}
+
+func runApply(c Change) error {
+	cmd, cleanup, err := ApplyCmd(c, nil)
 	if err != nil {
 		return err
 	}

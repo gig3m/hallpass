@@ -170,11 +170,19 @@ type event struct {
 	nc   lipgloss.Color
 }
 
+// job is a grant or revoke the user asked for. The file edit itself is
+// computed when it runs, against the file as it is then.
 type job struct {
-	allow   bool
-	entry   Entry
-	entries []Entry
-	strip   []string
+	allow bool
+	entry Entry
+}
+
+func (j job) change() Change {
+	if j.allow {
+		e := j.entry
+		return Change{Add: &e}
+	}
+	return Change{Remove: j.entry.Match()}
 }
 
 type applying struct {
@@ -541,7 +549,7 @@ func (m model) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 			break
 		}
 		e := NewEntry(d, vendor)
-		return m.start(job{allow: true, entry: e, entries: WithEntry(m.entries, e)})
+		return m.start(job{allow: true, entry: e})
 	case "d", "x", "delete":
 		var e Entry
 		var ok bool
@@ -554,7 +562,7 @@ func (m model) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.setStatus("no hallpass grant to remove here", cDim)
 			break
 		}
-		m.confirm = &job{entry: e, entries: WithoutEntry(m.entries, e.Match()), strip: NodesFor(e, m.all)}
+		m.confirm = &job{entry: e}
 	}
 	return m, nil
 }
@@ -579,8 +587,9 @@ func (m model) run(j job, password string) (tea.Model, tea.Cmd) {
 	if password != "" {
 		flags = []string{"-S", "-p", ""}
 	}
-	cmd, cleanup, err := ApplyCmd(j.entries, []string{j.entry.Vendor}, j.strip, flags)
+	cmd, cleanup, err := ApplyCmd(j.change(), flags)
 	if err != nil {
+		m.reloadRules()
 		m.setStatus(err.Error(), cBad)
 		return m, nil
 	}
@@ -593,8 +602,8 @@ func (m model) run(j job, password string) (tea.Model, tea.Cmd) {
 	}
 	add("install", "install → "+ManagedFile)
 	add("reload", "udevadm control --reload")
-	if len(j.strip) > 0 {
-		add("strip", fmt.Sprintf("setfacl -x u:%s on %d node%s", m.user, len(j.strip), plural(len(j.strip))))
+	if !j.allow {
+		add("strip", fmt.Sprintf("setfacl -x u:%s on connected %s nodes", m.user, j.entry.Match()))
 	}
 	add("trigger", "udevadm trigger --attr-match=idVendor="+j.entry.Vendor)
 	add("settle", "udevadm settle --timeout=5")

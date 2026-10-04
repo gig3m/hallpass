@@ -66,6 +66,7 @@ hallpass list                 connected devices and whether you can open them
 hallpass rules                current passes
 hallpass allow VID[:PID]      pass for one device, or a whole vendor without :PID
 hallpass revoke VID[:PID|*]   remove a pass
+hallpass rewrite              regenerate the rules file in the current format (after upgrading)
 ```
 
 | Key | |
@@ -87,7 +88,10 @@ Rows and tabs are clickable. If sudo wants a password, hallpass asks in its own 
 - **Numbered `70-` on purpose.** `uaccess` only takes effect in a file that sorts before `73-seat-late.rules`. A `99-mydevice.rules` with `TAG+="uaccess"` still tags the device but grants nothing, with no warning. hallpass marks rules like that with ⚠.
 - **Applies immediately.** After writing the file it reloads udev and retriggers the matching devices, so access changes without a re-plug.
 - **Revoke really revokes.** udev never removes an ACL it added, so hallpass strips it from connected devices first, then retriggers. If some other rule still grants access, the retrigger puts it back.
-- **Vendor passes** are for devices that change product ID between modes. A LEGO hub is `0694:0009` normally and `0694:0008` in its bootloader, and a flasher needs both. The USB line matches with `ATTR`, not `ATTRS`, so a vendor pass for a hub doesn't spread to everything plugged into it.
+- **Vendor passes** are for devices that change product ID between modes. A LEGO hub is `0694:0009` normally and `0694:0008` in its bootloader, and a flasher needs both.
+- **A pass covers that device and nothing else.** The USB line matches with `ATTR`, not `ATTRS`, and the hidraw line matches `ID_VENDOR_ID`/`ID_MODEL_ID` from udev's `usb_id`, which name the nearest USB device. So a pass for a hub doesn't reach the keyboards plugged into it.
+- **Safe with untrusted devices.** A device's name comes from the device itself, so hallpass strips control characters and newlines before it goes in a rules-file comment or on screen.
+- **No lost updates.** hallpass reads the rules file right before writing it and the privileged step checks it hasn't changed since, under a lock, so two hallpass windows can't undo each other.
 
 ## License
 

@@ -17,9 +17,12 @@ func TestRenderRoundTrip(t *testing.T) {
 	if err := os.WriteFile(path, []byte(Render(in)), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	got, err := loadEntriesFrom(path)
+	got, hash, err := loadEntriesFrom(path)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if len(hash) != 64 {
+		t.Fatalf("hash %q", hash)
 	}
 	if len(got) != 2 || got[0].Match() != "0483:df11" || got[1].Match() != "0694:*" || got[1].Label != in[0].Label {
 		t.Fatalf("round trip: %+v", got)
@@ -28,13 +31,65 @@ func TestRenderRoundTrip(t *testing.T) {
 
 func TestEntryLines(t *testing.T) {
 	l := Entry{Vendor: "05e3", Added: "x", Label: "hub"}.Lines()
-	// A vendor grant must not use ATTRS on the usb_device line, or granting
-	// a hub vendor would cover everything plugged into that hub.
-	if strings.Contains(l[1], "ATTRS") || !strings.Contains(l[1], `ENV{DEVTYPE}=="usb_device"`) {
-		t.Fatalf("usb line: %s", l[1])
+	// A grant must match only the device itself. ATTRS walks up through
+	// parents, so a hub grant would cover everything plugged into the hub.
+	for _, line := range l[1:] {
+		if strings.Contains(line, "ATTRS") {
+			t.Fatalf("matches ancestors: %s", line)
+		}
 	}
-	if strings.Contains(l[1], "idProduct") {
-		t.Fatalf("vendor grant has product: %s", l[1])
+	if !strings.Contains(l[1], `ENV{DEVTYPE}=="usb_device"`) || !strings.Contains(l[2], `ENV{ID_VENDOR_ID}=="05e3"`) {
+		t.Fatalf("lines: %q", l)
+	}
+	if strings.Contains(l[1], "idProduct") || strings.Contains(l[2], "ID_MODEL_ID") {
+		t.Fatalf("vendor grant has product: %q", l)
+	}
+}
+
+func TestLabelInjection(t *testing.T) {
+	evil := "Totally a Keyboard\nSUBSYSTEM==\"usb\", RUN+=\"/bin/sh -c id\"\r\x1b[31m\u2028x"
+	d := Device{Vendor: "1234", Product: "5678", Name: evil}
+	for _, e := range []Entry{NewEntry(d, false), NewEntry(Device{Vendor: "1234", Manufacturer: evil}, true), {Vendor: "1234", Label: evil}} {
+		out := Render([]Entry{e})
+		for _, line := range strings.Split(out, "\n") {
+			if strings.Contains(line, "RUN+=") && !strings.HasPrefix(line, "#") {
+				t.Fatalf("injected rule line: %q", line)
+			}
+			if strings.ContainsAny(line, "\r\x1b\u2028") {
+				t.Fatalf("control character survived: %q", line)
+			}
+		}
+		if got := parseEntries([]byte(out)); len(got) != 1 {
+			t.Fatalf("round trip: %+v", got)
+		}
+	}
+	if got := cleanText("  a\n\n b\t", 80); got != "a b" {
+		t.Fatalf("cleanText: %q", got)
+	}
+}
+
+func TestValid(t *testing.T) {
+	if !(Entry{Vendor: "0694", Added: "2026-10-04"}).Valid() {
+		t.Fatal("good entry rejected")
+	}
+	for _, e := range []Entry{{Vendor: "06\"4"}, {Vendor: "0694", Product: "zz"}, {Vendor: "0694", Added: "x | y"}} {
+		if e.Valid() {
+			t.Fatalf("bad entry accepted: %+v", e)
+		}
+	}
+}
+
+func TestChangeApply(t *testing.T) {
+	cur := []Entry{{Vendor: "0694"}, {Vendor: "03f0", Product: "0fbf"}}
+	add := Entry{Vendor: "0a12", Product: "4007"}
+	if got, _ := (Change{Add: &add}).apply(cur); len(got) != 3 {
+		t.Fatalf("add: %+v", got)
+	}
+	if got, _ := (Change{Remove: "0694:*"}).apply(cur); len(got) != 1 || got[0].Vendor != "03f0" {
+		t.Fatalf("remove: %+v", got)
+	}
+	if _, err := (Change{Remove: "dead:beef"}).apply(cur); err == nil {
+		t.Fatal("removing a missing grant should fail")
 	}
 }
 
