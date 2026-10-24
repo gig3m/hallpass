@@ -508,6 +508,22 @@ func TestViews(t *testing.T) {
 
 func TestKeysAndMouse(t *testing.T) {
 	stubExec(t, `exit 1`) // sudo is not ready; granting opens the password prompt
+	// `r` rescans sysfs. GitHub's Ubuntu image has /sys/bus/usb and this VM does
+	// not, so the fixture has to be the thing Scan reads or the device list
+	// changes under the later key assertions.
+	sys := isolateHostUSB(t)
+	writeSysDevice(t, sys, "1-1", map[string]string{
+		"idVendor": "1234\n", "idProduct": "5678\n", "busnum": "1\n", "devnum": "3\n",
+		"bDeviceClass": "00\n", "manufacturer": "Acme\n", "product": "Widget\n",
+	})
+	writeSysDevice(t, sys, "1-2", map[string]string{
+		"idVendor": "2222\n", "idProduct": "3333\n", "busnum": "1\n", "devnum": "4\n",
+		"bDeviceClass": "00\n", "manufacturer": "Acme\n", "product": "Other\n",
+	})
+	writeSysDevice(t, sys, "1-3", map[string]string{
+		"idVendor": "3333\n", "idProduct": "4444\n", "busnum": "1\n", "devnum": "5\n",
+		"bDeviceClass": "09\n", "manufacturer": "Acme\n", "product": "Hub\n",
+	})
 	m := baseModel()
 	m.all = []Device{
 		devAt("1-1", "1234", "5678", "Widget", "00", false, nil),
@@ -761,6 +777,13 @@ func TestKeysAndMouse(t *testing.T) {
 func TestUpdateMessages(t *testing.T) {
 	stubExec(t, `if [ "$1" = sudo ] && [ "$2" = -n ] && [ "$3" = true ]; then exit 0; fi
 exit 0`)
+	// finish() rescans before it flashes. The device it should flash has to be
+	// what Scan returns, not whatever USB bus the runner happens to have.
+	sys := isolateHostUSB(t)
+	writeSysDevice(t, sys, "1-1", map[string]string{
+		"idVendor": "1234\n", "idProduct": "5678\n", "busnum": "1\n", "devnum": "3\n",
+		"bDeviceClass": "00\n", "product": "Widget\n",
+	})
 	m := baseModel()
 	m.ticks = 9
 	m.apply = &applying{}
@@ -853,6 +876,7 @@ exit 0`)
 }
 
 func TestRunApplyGoroutine(t *testing.T) {
+	isolateHostUSB(t)
 	stubExec(t, `if [ "$1" = sudo ] && [ "$2" = -n ] && [ "$3" = true ]; then exit 0; fi
 if [ -n "$CAPTURE_STDIN" ]; then cat > "$CAPTURE_STDIN"; fi
 printf '%s\n' "@@ install" "@@ reload" "@@ done"
@@ -971,6 +995,34 @@ func TestNewModelSmoke(t *testing.T) {
 	}
 	if m.user == "" {
 		t.Fatal("user")
+	}
+}
+
+// isolateHostUSB points Scan and the rules file at a temp tree. Tests that
+// rescan or reload must not read the machine's /sys/bus/usb or /etc/udev.
+func isolateHostUSB(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	sys := filepath.Join(root, "sys")
+	rules := filepath.Join(root, "rules")
+	if err := os.MkdirAll(sys, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(rules, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	setGlobal(t, &sysUSB, sys)
+	setGlobal(t, &devBusDir, filepath.Join(root, "bus"))
+	setGlobal(t, &devDir, filepath.Join(root, "dev"))
+	setGlobal(t, &ManagedFile, filepath.Join(root, "70-local-usb.rules"))
+	setGlobal(t, &ruleDirs, []string{rules})
+	return sys
+}
+
+func writeSysDevice(t *testing.T, sys, name string, attrs map[string]string) {
+	t.Helper()
+	for k, v := range attrs {
+		mustWrite(t, filepath.Join(sys, name, k), v)
 	}
 }
 
