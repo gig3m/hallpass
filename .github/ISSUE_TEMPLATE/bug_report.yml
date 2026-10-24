@@ -1,0 +1,42 @@
+name: Bug report
+description: A pass did the wrong thing, or hallpass crashed or lied about access
+title: ""
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        hallpass runs on Linux and writes `/etc/udev/rules.d/70-local-usb.rules`. Do not paste sudo passwords or private serial numbers.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead. If a browser configurator failed, paste the error (for example the USBDevice or "Failed to open the device" message).
+    validations:
+      required: true
+  - type: textarea
+    id: device
+    attributes:
+      label: Device
+      description: Vendor and product IDs if you have them (`lsusb`). Say whether it was a keyboard, a bootloader, a hub, or something else, and whether the ID changes between modes.
+  - type: textarea
+    id: output
+    attributes:
+      label: hallpass output
+      description: Output of `hallpass list` and `hallpass rules`. The pass card's rule list is useful when a rule exists but the device stays root-only.
+      render: text
+  - type: input
+    id: version
+    attributes:
+      label: hallpass version
+      description: Output of `hallpass --version`.
+      placeholder: v0.1.2
+    validations:
+      required: true
+  - type: input
+    id: system
+    attributes:
+      label: Distro and session
+      placeholder: Fedora 42, GNOME on Wayland, Chrome from the distro package
+    validations:
+      required: true
