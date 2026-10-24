@@ -8,6 +8,10 @@ import (
 	"strings"
 )
 
+// command starts external programs. Tests replace it so a unit test never
+// runs sudo, udevadm, or loginctl.
+var command = exec.Command
+
 // applyScript installs (or removes) the managed file, reloads udev, and
 // replays "change" events so the ACL flips without a re-plug.
 //
@@ -102,9 +106,6 @@ func ApplyCmd(c Change, sudoFlags []string) (cmd *exec.Cmd, cleanup func(), err 
 	strip := ""
 	switch {
 	case c.Add != nil:
-		if !c.Add.Valid() {
-			return nil, nil, fmt.Errorf("refusing to write invalid entry %q", c.Add.Match())
-		}
 		vendors[c.Add.Vendor] = true
 	case c.Remove != "":
 		vid, pid, _ := strings.Cut(c.Remove, ":")
@@ -139,7 +140,7 @@ func ApplyCmd(c Change, sudoFlags []string) (cmd *exec.Cmd, cleanup func(), err 
 	for v := range vendors {
 		args = append(args, v)
 	}
-	return exec.Command("sudo", args...), cleanup, nil
+	return command("sudo", args...), cleanup, nil
 }
 
 func currentUser() string {
@@ -151,7 +152,7 @@ func currentUser() string {
 
 // SudoReady reports whether sudo will run without prompting.
 func SudoReady() bool {
-	return exec.Command("sudo", "-n", "true").Run() == nil
+	return command("sudo", "-n", "true").Run() == nil
 }
 
 // Seat describes the login seat, since uaccess only grants to the user at
@@ -162,6 +163,6 @@ func Seat() (seat string, active bool) {
 	if seat == "" || id == "" {
 		return seat, false
 	}
-	out, err := exec.Command("loginctl", "show-session", id, "-p", "Active", "--value").Output()
+	out, err := command("loginctl", "show-session", id, "-p", "Active", "--value").Output()
 	return seat, err == nil && strings.TrimSpace(string(out)) == "yes"
 }

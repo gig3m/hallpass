@@ -14,7 +14,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-const usage = `hallpass: grant yourself access to USB devices
+var usage = `hallpass: grant yourself access to USB devices
 
 usage:
   hallpass                      interactive TUI
@@ -25,6 +25,9 @@ usage:
   hallpass rewrite              regenerate the rules file (after upgrading hallpass)
   hallpass --version
 `
+
+// currentEUID is os.Geteuid. Tests set it so the root refusal can run unprivileged.
+var currentEUID = os.Geteuid
 
 // version is set at release build time with -ldflags "-X main.version=...".
 var version = ""
@@ -41,20 +44,25 @@ func buildVersion() string {
 }
 
 func main() {
-	if os.Geteuid() == 0 {
-		fail("don't run hallpass with sudo or as root; run plain `hallpass` as your normal user.\n" +
+	os.Exit(runCLI(os.Args[1:]))
+}
+
+func runCLI(args []string) int {
+	if currentEUID() == 0 {
+		fmt.Fprintln(os.Stderr, "hallpass: don't run hallpass with sudo or as root; run plain `hallpass` as your normal user.\n"+
 			"It calls sudo itself when it writes the rules file, and as root every device looks accessible.")
+		return 1
 	}
-	args := os.Args[1:]
 	if len(args) == 0 {
 		final, err := tea.NewProgram(newModel(), tea.WithAltScreen(), tea.WithMouseCellMotion()).Run()
 		if err != nil {
-			fail(err.Error())
+			fmt.Fprintln(os.Stderr, "hallpass:", err.Error())
+			return 1
 		}
 		if m, ok := final.(model); ok {
 			fmt.Println(m.quitLine())
 		}
-		return
+		return 0
 	}
 	var err error
 	switch args[0] {
@@ -74,16 +82,13 @@ func main() {
 		fmt.Print(usage)
 	default:
 		fmt.Fprint(os.Stderr, usage)
-		os.Exit(2)
+		return 2
 	}
 	if err != nil {
-		fail(err.Error())
+		fmt.Fprintln(os.Stderr, "hallpass:", err.Error())
+		return 1
 	}
-}
-
-func fail(msg string) {
-	fmt.Fprintln(os.Stderr, "hallpass:", msg)
-	os.Exit(1)
+	return 0
 }
 
 func needArg(args []string, f func(string) error) error {

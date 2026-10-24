@@ -17,7 +17,8 @@ import (
 
 // ManagedFile is the only file hallpass writes. It must sort before
 // 73-seat-late.rules, or TAG+="uaccess" is applied but no ACL is granted.
-const ManagedFile = "/etc/udev/rules.d/70-local-usb.rules"
+// Tests point it at a temp file; the default is what a normal run writes.
+var ManagedFile = "/etc/udev/rules.d/70-local-usb.rules"
 
 const seatLate = "73-seat-late.rules"
 

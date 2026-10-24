@@ -12,7 +12,13 @@ import (
 	"syscall"
 )
 
-const sysUSB = "/sys/bus/usb/devices"
+// sysUSB, devBusDir, and devDir are the paths Scan reads. Tests point them
+// at a fixture tree; a normal run uses sysfs and /dev.
+var (
+	sysUSB    = "/sys/bus/usb/devices"
+	devBusDir = "/dev/bus/usb"
+	devDir    = "/dev"
+)
 
 // Device is one USB device (not an interface) as seen in sysfs.
 type Device struct {
@@ -124,7 +130,7 @@ func Scan() ([]Device, error) {
 			Bus:          bus,
 			Dev:          dev,
 			Class:        readAttr(dir, "bDeviceClass"),
-			Devnode:      fmt.Sprintf("/dev/bus/usb/%03d/%03d", bus, dev),
+			Devnode:      fmt.Sprintf("%s/%03d/%03d", devBusDir, bus, dev),
 		}
 		d.Writable = canOpen(d.Devnode)
 		d.Owner = ownerOf(d.Devnode)
@@ -162,8 +168,13 @@ func ACLUsers(path string) []string {
 	if err != nil || n < 4 {
 		return nil
 	}
+	return aclUsers(buf[:n])
+}
+
+// aclUsers parses the user entries of a posix_acl_access xattr value.
+func aclUsers(buf []byte) []string {
 	var out []string
-	for off := 4; off+8 <= n; off += 8 {
+	for off := 4; off+8 <= len(buf); off += 8 {
 		tag := uint16(buf[off]) | uint16(buf[off+1])<<8
 		if tag != 0x02 { // ACL_USER
 			continue
@@ -179,7 +190,7 @@ func hidrawNodes(dir string) []Node {
 	matches, _ := filepath.Glob(filepath.Join(dir, "*:*", "*", "hidraw", "hidraw*"))
 	var nodes []Node
 	for _, m := range matches {
-		p := "/dev/" + filepath.Base(m)
+		p := devDir + "/" + filepath.Base(m)
 		nodes = append(nodes, Node{Path: p, Writable: canOpen(p)})
 	}
 	sort.Slice(nodes, func(i, j int) bool { return nodes[i].Path < nodes[j].Path })
@@ -227,12 +238,14 @@ type idDB struct {
 var (
 	idsOnce sync.Once
 	ids     idDB
+	// usbIDPaths is searched in order. The first file that opens wins.
+	usbIDPaths = []string{"/usr/share/hwdata/usb.ids", "/usr/share/misc/usb.ids"}
 )
 
 func usbIDs() *idDB {
 	idsOnce.Do(func() {
 		ids = idDB{vendors: map[string]string{}, products: map[string]string{}}
-		for _, p := range []string{"/usr/share/hwdata/usb.ids", "/usr/share/misc/usb.ids"} {
+		for _, p := range usbIDPaths {
 			f, err := os.Open(p)
 			if err != nil {
 				continue
