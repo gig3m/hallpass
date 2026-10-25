@@ -988,6 +988,8 @@ func readStepsTo(t *testing.T, text string) []string {
 }
 
 func TestNewModelSmoke(t *testing.T) {
+	isolateHostUSB(t)
+	stubExec(t, `exit 1`)
 	m := newModel()
 	m.w, m.h = 120, 36
 	if !strings.Contains(m.View(), "hallpass") {

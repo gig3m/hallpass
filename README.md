@@ -129,7 +129,7 @@ Rows and tabs are clickable. If sudo wants a password, hallpass asks in its own 
 
 A pass is a root-owned udev rule. It runs on every plug of a matching device. hallpass is deliberate about what that rule is allowed to say.
 
-- It writes one file, `/etc/udev/rules.d/70-local-usb.rules`, mode `0644`. It does not edit rules it did not write.
+- It writes one file, `/etc/udev/rules.d/70-local-usb.rules`, mode `0644`. It owns that file and regenerates it on every change, so hand-written lines in it are dropped. It never touches other rule files.
 - The grant is `TAG+="uaccess"`. logind then gives the person at the active seat an ACL. The node is not opened to every account on the machine, and you are not left in a group after you log out.
 - Over plain SSH there is often no active seat, so a pass will not open the device there. The header shows when the seat is missing or inactive.
 - Vendor passes (`v`, or `hallpass allow VID` with no product) match every product from that vendor. Use one when a bootloader changes the product ID. Prefer a single-device pass when one ID is enough.
@@ -145,7 +145,7 @@ Revoke each pass while hallpass is still installed, so the ACLs come off devices
 ```sh
 hallpass rules
 hallpass revoke abcd:0123    # one product
-hallpass revoke 0694:*       # a whole-vendor pass
+hallpass revoke 0694         # a whole-vendor pass
 ```
 
 Then remove the binary: delete `~/.local/bin/hallpass`, or `$(go env GOPATH)/bin/hallpass` if you used `go install`, or `sudo pacman -R hallpass` for the Arch package.
